@@ -4,7 +4,6 @@
 #include <sched.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
 
@@ -55,6 +54,7 @@ void xsrand(uint64_t x) {
 /////////////////////////////////////
 
 // Function containing the conditional branch instruction
+/*
 void perform_branch(int condition)
 {
     __asm__ volatile(
@@ -68,6 +68,10 @@ void perform_branch(int condition)
         : "r"(condition)
         : "cc", "memory");
 }
+*/
+
+// Function containing the conditional branch instruction; implemented in .s file
+void perform_branch(int condition);
 
 void train_branch_predictor(int iterations, int condition)
 {
@@ -132,7 +136,7 @@ int main()
 
     printf("Average time for predictable branch: %d\n", total_branch_time[0] / TRIALS);
     printf("Average time for unpredictable branch: %f\n", avg_time_unpredictable);
-    printf("Correct prediction rate for unpredictable branch: %f\%\n", (double) unpredictable_branches_below_avg / TRIALS);
+    printf("Correct prediction rate for unpredictable branch: %f%%\n", (double) unpredictable_branches_below_avg / TRIALS);
 
     return 0;
 }
