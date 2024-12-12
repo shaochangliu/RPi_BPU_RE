@@ -134,7 +134,7 @@ int main()
         if (results[i][1] < avg_time_unpredictable)
             unpredictable_branches_below_avg++;
 
-    printf("Average time for predictable branch: %d\n", total_branch_time[0] / TRIALS);
+    printf("Average time for predictable branch: %f\n", (double) total_branch_time[0] / TRIALS);
     printf("Average time for unpredictable branch: %f\n", avg_time_unpredictable);
     printf("Correct prediction rate for unpredictable branch: %f%%\n", (double) unpredictable_branches_below_avg / TRIALS);
 
