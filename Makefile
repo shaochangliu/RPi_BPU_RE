@@ -1,21 +1,22 @@
 CC = gcc
-CFLAGS = -Wall
+CFLAGS = -Wall -g
+LDFLAGS = -lelf
 
 TARGET = time_diff
-OBJS = time_diff.o branch.o
+OBJS = time_diff.o
 
-all: $(TARGET)
+all: $(TARGET) branch.o
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 time_diff.o: time_diff.c
 	$(CC) $(CFLAGS) -c $<
 
-branch.o: branch.s
+branch.o: branch.c
 	$(CC) $(CFLAGS) -c $<
 
 clean:
-	rm -f $(TARGET) $(OBJS)
+	rm -f $(TARGET) $(OBJS) branch.o
 
 .PHONY: all clean
