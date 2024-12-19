@@ -236,7 +236,7 @@ int main()
 
     printf("Average time for predictable branch: %f\n", (double)total_branch_time[0] / TRIALS);
     printf("Average time for unpredictable branch: %f\n", avg_time_unpredictable);
-    printf("Correct prediction rate for unpredictable branch: %f%%\n", (double)unpredictable_branches_below_avg / TRIALS);
+    printf("Correct prediction rate for unpredictable branch: %f%%\n", (double)unpredictable_branches_below_avg / TRIALS * 100);
 
     return 0;
 }
