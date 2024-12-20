@@ -4,6 +4,7 @@
         "mman.h": "c",
         "unistd.h": "c",
         "time.h": "c",
-        "sched.h": "c"
+        "sched.h": "c",
+        "string.h": "c"
     }
 }

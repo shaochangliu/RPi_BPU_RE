@@ -14,10 +14,10 @@
 #include <unistd.h>
 
 #define TRIALS 10000
-#define TARGET_ADDRESS 0x100000000   // mmap needs the address to be aligned to a page boundary
-#define MAX_INDEX_BITS 24
-#define MAX_FUNC_PTR_NUM 65
-void (*perform_branch[MAX_FUNC_PTR_NUM])(int);
+#define TARGET_ADDRESS 0x10000000   // mmap needs the address to be aligned to a page boundary
+#define MAX_INDEX_BITS 26
+#define MAX_FUNC_PTR_NUM 20
+void (*perform_branch[MAX_FUNC_PTR_NUM])();
 
 void load_function(const char *filename, const char *func_name, int index_bits)
 {
@@ -58,7 +58,14 @@ void load_function(const char *filename, const char *func_name, int index_bits)
                 if (strcmp(func_name, elf_strptr(e, shdr.sh_link, sym.st_name)) == 0)
                 {
                     // printf("Symbol name: %s\n", func_name);
-                    // printf("Symbol size: %zu\n", sym.st_size);
+                    printf("Symbol size: %zu\n", sym.st_size);
+                    if (sym.st_size >= (1 << index_bits))
+                    {
+                        fprintf(stderr, "Function size is too large for the given index bits\n");
+                        elf_end(e);
+                        close(fd);
+                        exit(EXIT_FAILURE);
+                    }
 
                     // Find the section containing the symbol
                     Elf_Scn *sym_scn = elf_getscn(e, sym.st_shndx);
@@ -70,7 +77,7 @@ void load_function(const char *filename, const char *func_name, int index_bits)
                     // printf("Symbol offset: %ld\n", offset);
 
                     // Calculate the memory we need to put all the functions
-                    size_t size = ((1 << index_bits) + sym.st_size) * MAX_FUNC_PTR_NUM;
+                    size_t size = (1 << index_bits) * MAX_FUNC_PTR_NUM;
                     size = (size + 0xfff) & ~0xfff; // Align to page size
                     void *mem = mmap((void *)TARGET_ADDRESS, size, PROT_READ | PROT_WRITE | PROT_EXEC,
                                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
@@ -93,23 +100,23 @@ void load_function(const char *filename, const char *func_name, int index_bits)
                         exit(EXIT_FAILURE);
                     }
 
-                    /*
+                    // /*
                     printf("Read content:\n");
                     for (ssize_t j = 0; j < bytes_read; ++j)
                     {
                         printf("%02x ", ((unsigned char *)mem)[j]);
                     }
                     printf("\n");
-                    */
+                    // */
 
-                    perform_branch[0] = (void (*)(int))mem;
+                    perform_branch[0] = (void (*)())mem;
                     // Clear instruction cache
                     __builtin___clear_cache(mem, (char *)mem + sym.st_size);
 
                     for (int j = 1; j < MAX_FUNC_PTR_NUM; j++)
                     {
                         memcpy((char *)mem + j * (1 << index_bits), mem, sym.st_size);
-                        perform_branch[j] = (void (*)(int))((char *)mem + j * (1 << index_bits));
+                        perform_branch[j] = (void (*)())((char *)mem + j * (1 << index_bits));
                         // Clear instruction cache
                         __builtin___clear_cache((char *)mem + j * (1 << index_bits), (char *)mem + j * (1 << index_bits) + sym.st_size);
                     }
@@ -154,7 +161,7 @@ double measure_branch_time(int iterations, int branch_num)
         start_time = read_cntvct();
         #pragma GCC unroll 64
         for (int j = 0; j < branch_num; j++)
-            perform_branch[j](1);
+            perform_branch[j]();
         end_time = read_cntvct();
         total_time += end_time - start_time;
     }
