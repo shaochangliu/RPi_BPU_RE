@@ -1,0 +1,184 @@
+#define _GNU_SOURCE
+
+#include <err.h>
+#include <fcntl.h>
+#include <gelf.h>
+#include <libelf.h>
+#include <sched.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <time.h>
+#include <unistd.h>
+
+#define TRIALS 10
+#define TARGET_ADDRESS 0x80000000   // mmap needs the address to be aligned to a page boundary
+#define MAX_FUNC_PTR_NUM 6
+void (*perform_branch[MAX_FUNC_PTR_NUM])(int);
+
+void load_function(const char *filename, const char *func_name, int index_bits)
+{
+    if (elf_version(EV_CURRENT) == EV_NONE)
+    {
+        fprintf(stderr, "ELF library initialization failed: %s\n", elf_errmsg(-1));
+        exit(EXIT_FAILURE);
+    }
+
+    int fd = open(filename, O_RDONLY);
+    if (fd < 0)
+    {
+        perror("open");
+        exit(EXIT_FAILURE);
+    }
+
+    Elf *e = elf_begin(fd, ELF_C_READ, NULL);
+    if (!e)
+    {
+        fprintf(stderr, "elf_begin() failed: %s\n", elf_errmsg(-1));
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    Elf_Scn *scn = NULL;
+    GElf_Shdr shdr;
+    while ((scn = elf_nextscn(e, scn)) != NULL)
+    {
+        gelf_getshdr(scn, &shdr);
+        if (shdr.sh_type == SHT_SYMTAB)
+        {
+            Elf_Data *data = elf_getdata(scn, NULL);
+            int count = shdr.sh_size / shdr.sh_entsize;
+            for (int i = 0; i < count; ++i)
+            {
+                GElf_Sym sym;
+                gelf_getsym(data, i, &sym);
+                if (strcmp(func_name, elf_strptr(e, shdr.sh_link, sym.st_name)) == 0)
+                {
+                    // printf("Symbol name: %s\n", func_name);
+                    // printf("Symbol size: %zu\n", sym.st_size);
+
+                    // Find the section containing the symbol
+                    Elf_Scn *sym_scn = elf_getscn(e, sym.st_shndx);
+                    GElf_Shdr sym_shdr;
+                    gelf_getshdr(sym_scn, &sym_shdr);
+
+                    // Calculate the file offset of the symbol
+                    off_t offset = sym_shdr.sh_offset + (sym.st_value - sym_shdr.sh_addr);
+                    // printf("Symbol offset: %ld\n", offset);
+
+                    // Calculate the memory we need to put all the functions
+                    size_t size = ((1 << index_bits) + sym.st_size) * MAX_FUNC_PTR_NUM;
+                    size = (size + 0xfff) & ~0xfff; // Align to page size
+                    void *mem = mmap((void *)TARGET_ADDRESS, size, PROT_READ | PROT_WRITE | PROT_EXEC,
+                                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+                    if (mem == MAP_FAILED)
+                    {
+                        perror("mmap");
+                        elf_end(e);
+                        close(fd);
+                        exit(EXIT_FAILURE);
+                    }
+                    memset(mem, 0, size);
+
+                    lseek(fd, offset, SEEK_SET);
+                    ssize_t bytes_read = read(fd, mem, sym.st_size);
+                    if (bytes_read != sym.st_size)
+                    {
+                        fprintf(stderr, "Failed to read function code: expected %zu bytes, got %zd bytes\n", sym.st_size, bytes_read);
+                        elf_end(e);
+                        close(fd);
+                        exit(EXIT_FAILURE);
+                    }
+
+                    /*
+                    printf("Read content:\n");
+                    for (ssize_t j = 0; j < bytes_read; ++j)
+                    {
+                        printf("%02x ", ((unsigned char *)mem)[j]);
+                    }
+                    printf("\n");
+                    */
+
+                    perform_branch[0] = (void (*)(int))mem;
+                    // Clear instruction cache
+                    __builtin___clear_cache(mem, (char *)mem + sym.st_size);
+
+                    for (int j = 1; j < MAX_FUNC_PTR_NUM; j++)
+                    {
+                        memcpy((char *)mem + j * (1 << index_bits), mem, sym.st_size);
+                        perform_branch[j] = (void (*)(int))((char *)mem + j * (1 << index_bits));
+                        // Clear instruction cache
+                        __builtin___clear_cache((char *)mem + j * (1 << index_bits), (char *)mem + j * (1 << index_bits) + sym.st_size);
+                    }
+
+                    break;
+                }
+            }
+            break;
+        }
+    }
+
+    elf_end(e);
+    close(fd);
+}
+
+// Function to bind the process to a specific CPU
+void bind_to_cpu(int cpu)
+{
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(cpu, &set);
+    if (sched_setaffinity(0, sizeof(set), &set) < 0)
+        err(EXIT_FAILURE, "Unable to set CPU affinity");
+}
+
+// Function to get current time; similar to rdtscp
+__attribute__((always_inline)) inline uint64_t read_cntvct(void)
+{
+    uint64_t val;
+    asm volatile("dsb ish" ::: "memory");
+    asm volatile("mrs %0, cntvct_el0" : "=r"(val)); // Barrier before and after reading the counter
+    asm volatile("dsb ish" ::: "memory");
+    return val;
+}
+
+uint64_t measure_branch_time(int iterations)
+{
+    uint64_t start_time, end_time, total_time = 0;
+
+    for (int i = 0; i < iterations; i++)
+    {
+        start_time = read_cntvct();
+        #pragma GCC unroll 64
+        for (int j = 0; j < MAX_FUNC_PTR_NUM; j++)
+            perform_branch[j](1);
+        end_time = read_cntvct();
+        total_time += end_time - start_time;
+    }
+
+    return total_time;
+}
+
+int main()
+{
+    uint64_t time_diff;
+    int index_bits = 6;
+    int max_index_bits = 27;
+
+    // Bind the process to CPU 0
+    bind_to_cpu(0);
+
+    for (; index_bits <= max_index_bits; index_bits++)
+    {
+        // Load the function containing the branch instruction
+        load_function("branch.o", "perform_branch", index_bits);
+
+        // Measure the time taken for branches
+        time_diff = measure_branch_time(TRIALS);
+        printf("Index bits: %d, Average time taken for branch: %f\n", index_bits, 1.0 * time_diff / TRIALS);
+    }
+
+    return 0;
+}
