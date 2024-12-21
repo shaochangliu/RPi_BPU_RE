@@ -5,6 +5,7 @@
         "unistd.h": "c",
         "time.h": "c",
         "sched.h": "c",
-        "string.h": "c"
+        "string.h": "c",
+        "stdlib.h": "c"
     }
 }

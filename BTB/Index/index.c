@@ -13,10 +13,10 @@
 #include <time.h>
 #include <unistd.h>
 
-#define TRIALS 10
-#define TARGET_ADDRESS 0x80000000   // mmap needs the address to be aligned to a page boundary
-#define MAX_FUNC_PTR_NUM 6
-void (*perform_branch[MAX_FUNC_PTR_NUM])(int);
+#define TRIALS 10000
+#define TARGET_ADDRESS 0x10000000   // mmap needs the address to be aligned to a page boundary
+#define MAX_FUNC_PTR_NUM 17
+void (*perform_branch[MAX_FUNC_PTR_NUM])();
 
 void load_function(const char *filename, const char *func_name, int index_bits)
 {
@@ -69,7 +69,7 @@ void load_function(const char *filename, const char *func_name, int index_bits)
                     // printf("Symbol offset: %ld\n", offset);
 
                     // Calculate the memory we need to put all the functions
-                    size_t size = ((1 << index_bits) + sym.st_size) * MAX_FUNC_PTR_NUM;
+                    size_t size = (1 << index_bits) * MAX_FUNC_PTR_NUM;
                     size = (size + 0xfff) & ~0xfff; // Align to page size
                     void *mem = mmap((void *)TARGET_ADDRESS, size, PROT_READ | PROT_WRITE | PROT_EXEC,
                                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
@@ -101,14 +101,14 @@ void load_function(const char *filename, const char *func_name, int index_bits)
                     printf("\n");
                     */
 
-                    perform_branch[0] = (void (*)(int))mem;
+                    perform_branch[0] = (void (*)())mem;
                     // Clear instruction cache
                     __builtin___clear_cache(mem, (char *)mem + sym.st_size);
 
                     for (int j = 1; j < MAX_FUNC_PTR_NUM; j++)
                     {
                         memcpy((char *)mem + j * (1 << index_bits), mem, sym.st_size);
-                        perform_branch[j] = (void (*)(int))((char *)mem + j * (1 << index_bits));
+                        perform_branch[j] = (void (*)())((char *)mem + j * (1 << index_bits));
                         // Clear instruction cache
                         __builtin___clear_cache((char *)mem + j * (1 << index_bits), (char *)mem + j * (1 << index_bits) + sym.st_size);
                     }
@@ -153,7 +153,7 @@ uint64_t measure_branch_time(int iterations)
         start_time = read_cntvct();
         #pragma GCC unroll 64
         for (int j = 0; j < MAX_FUNC_PTR_NUM; j++)
-            perform_branch[j](1);
+            perform_branch[j]();
         end_time = read_cntvct();
         total_time += end_time - start_time;
     }
@@ -164,8 +164,8 @@ uint64_t measure_branch_time(int iterations)
 int main()
 {
     uint64_t time_diff;
-    int index_bits = 6;
-    int max_index_bits = 27;
+    int index_bits = 4;
+    int max_index_bits = 26;
 
     // Bind the process to CPU 0
     bind_to_cpu(0);
